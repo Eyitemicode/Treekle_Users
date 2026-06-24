@@ -1,0 +1,64 @@
+name: API Regression
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+  schedule:
+    - cron: '0 6 * * *'
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install newman
+        run: npm install -g newman newman-reporter-htmlextra
+
+      - name: Run API regression
+        id: regression
+        continue-on-error: true
+        run: |
+          mkdir -p reports
+          newman run "Treekle Users.postman_collection.json" \
+            -e "Treekle Staging ENV Copy 2.postman_environment.json" \
+            --timeout-script 90000 \
+            --reporters cli,htmlextra,json \
+            --reporter-htmlextra-export reports/regression-report.html \
+            --reporter-htmlextra-title "Treekle Users API Regression" \
+            --reporter-htmlextra-darkTheme \
+            --reporter-json-export reports/regression-report.json
+
+      - name: Build colourful email summary
+        if: always()
+        run: node scripts/generate-email-summary.js reports/regression-report.json
+
+      - name: Upload HTML report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-report
+          path: reports/regression-report.html
+
+      - name: Email report to stakeholders
+        if: always()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: 'Treekle Users API Regression — ${{ job.status }} (run #${{ github.run_number }})'
+          to: oladimeji.ajayi@fbistech.com,solomon.ugbo@fbistech.com,gift.alabo@fbistech.com,osayuki.aganmwonyi@fbistech.com,eyitemi.abioritsegbemi@fbistech.com
+          from: Treekle API Regression <${{ secrets.SMTP_USERNAME }}>
+          html_body: file://email-summary.html
+          attachments: reports/regression-report.html
+
+      - name: Fail job if regression failed
+        if: steps.regression.outcome == 'failure'
+        run: exit 1
